@@ -1,0 +1,74 @@
+//@version=6
+indicator("曜日×時間帯 方向性ヒートマップ", overlay=true)
+
+tz   = input.string("Asia/Tokyo", "タイムゾーン")
+mode = input.string("平均リターン(pips)", "表示", options=["平均リターン(pips)", "陽線の割合(%)"])
+
+isRet = mode == "平均リターン(pips)"
+fmt   = isRet ? "#.##" : "#"
+
+var float[] sums = array.new_float(168, 0.0)
+var float[] sqs  = array.new_float(168, 0.0)
+var int[]   cnts = array.new_int(168, 0)
+var int[]   ups  = array.new_int(168, 0)
+var float bOpen  = 0.0
+var float bClose = 0.0
+var int   bKey   = -1
+
+d   = dayofweek(time, tz)
+idx = (d + 5) % 7          // 月=0 ... 土=5, 日=6
+h   = hour(time, tz)
+key = idx * 24 + h
+
+if key != bKey
+    if bKey >= 0
+        r = (bClose - bOpen) / (syminfo.mintick * 10)
+        array.set(sums, bKey, array.get(sums, bKey) + r)
+        array.set(sqs,  bKey, array.get(sqs,  bKey) + r * r)
+        array.set(cnts, bKey, array.get(cnts, bKey) + 1)
+        if r > 0
+            array.set(ups, bKey, array.get(ups, bKey) + 1)
+    bOpen  := open
+    bClose := close
+    bKey   := key
+else
+    bClose := close
+
+var table t = table.new(position.middle_right, 8, 25, border_width = 1)
+
+if barstate.islast
+    vals = array.new_float(168, na)
+    tv   = array.new_float(168, na)
+    lim  = 0.0001
+    for i = 0 to 167
+        n = array.get(cnts, i)
+        if n >= 3
+            m  = array.get(sums, i) / n
+            vr = math.max((array.get(sqs, i) - n * m * m) / (n - 1), 0.0)
+            sd = math.sqrt(vr)
+            pu = array.get(ups, i) * 100.0 / n
+            tMean = sd > 0 ? m / (sd / math.sqrt(n)) : 0.0
+            tPct  = (pu - 50.0) / (50.0 / math.sqrt(n))
+            v = isRet ? m : pu - 50.0
+            array.set(vals, i, v)
+            array.set(tv, i, isRet ? tMean : tPct)
+            lim := math.max(lim, math.abs(v))
+
+    days    = array.from("月", "火", "水", "木", "金", "土", "日")
+    neutral = color.new(color.gray, 85)
+    table.cell(t, 0, 0, "時", text_color = color.white, bgcolor = color.new(color.gray, 30), text_size = size.small)
+    for di = 0 to 6
+        table.cell(t, di + 1, 0, array.get(days, di), text_color = color.white, bgcolor = color.new(color.gray, 30), text_size = size.small)
+
+    for hr = 0 to 23
+        table.cell(t, 0, hr + 1, str.tostring(hr), text_color = color.white, bgcolor = color.new(color.gray, 30), text_size = size.tiny)
+        for di = 0 to 6
+            i = di * 24 + hr
+            v = array.get(vals, i)
+            if na(v)
+                table.cell(t, di + 1, hr + 1, "-", text_color = color.gray, bgcolor = na, text_size = size.tiny)
+            else
+                col = v >= 0 ? color.from_gradient(v, 0, lim, neutral, color.new(color.red, 20)) : color.from_gradient(v, -lim, 0, color.new(color.blue, 20), neutral)
+                shown = isRet ? v : v + 50.0
+                star  = math.abs(array.get(tv, i)) >= 2.0 ? "*" : ""
+                table.cell(t, di + 1, hr + 1, str.tostring(shown, fmt) + star, text_color = color.white, bgcolor = col, text_size = size.tiny)
